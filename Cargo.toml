@@ -1,0 +1,27 @@
+[package]
+name = "unipass_openid_auth"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rand = "0.8"
+hex = "*"
+sha2 = "0.10.6"
+base64 = "0.21.0"
+anyhow = { version = "1.0" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4.4.2", features = ["derive"] }
+tokio = { version = "1.16", features = [
+    "net",
+    "io-util",
+    "time",
+    "rt-multi-thread",
+    "macros",
+] }
+ethers = { version = "2.0.8" }
+
+prover = { git = "ssh://git@github.com/UniPassID/UniPass-email-circuits.git", branch = "develop" }
+plonk = { git = "ssh://git@github.com/UniPassID/UniPass-email-circuits.git", branch = "develop" }
