@@ -1,10 +1,8 @@
 # UniPass-OpenID-Auth
 
+## Usage
+
 This repository is used to generate verification data for OpenID IdTokens for on-chain validation. 
-
-If you only need direct verification without privacy perserving, you need to place a valid id_token in `build/id_token.txt`, then run `cargo run --release open-id-args` and find the input at `build/id_token.output`.
-
-If you want to hide user identifiers using zero-knowledge proofs, first run `cargo run --release gen-params` to generate parameters, and then run `cargo run --release gen-keys` to generate the public keys used for zero-knowledge proof generation. To perform this step, you need to place a valid id_token in `build/id_token.txt`. Then, run `cargo run --release open-id-zk-args --pepper 0x...` to generate the necessary output, where 'pepper' is a 32-byte long hex expression used to hide 'sub'. You can find the required output in `build/zkConfigs`.json and `build/id_token_zk.output`.
 
 ```
 Usage: unipass_openid_auth <COMMAND>
@@ -23,7 +21,17 @@ Options:
   -V, --version  Print version
 ```
 
+If you only need direct verification without privacy perserving, you need to place a valid id_token in `build/id_token.txt`, then run `cargo run --release open-id-args` and find the output at `build/id_token.output`.
+
+If you want to hide user identifiers using zero-knowledge proofs, first run `cargo run --release gen-params` to generate parameters, and then run `cargo run --release gen-keys` to generate the public keys used for zero-knowledge proof generation. To perform this step, you need to place a valid id_token in `build/id_token.txt`. Then, run `cargo run --release open-id-zk-args --pepper 0x...` to generate the necessary output, where 'pepper' is a 32-byte long hex expression used to hide 'sub'. You can find the required output in `build/zkConfigs`.json and `build/id_token_zk.output`.
+
+
+Then, configure all the outputs as environment variables according to the [OpenID-Auth-Contracts](https://github.com/UniPassID/OpenID-Auth-Contracts)'s specified rules , and you can verify the on-chain Id Token validation functionality.
+
+
 ## Design
+
+### Id Token
 
 An OpenID IdToken is primarily composed of three parts: Header, Payload, and Signature.
 
@@ -74,13 +82,23 @@ Key attributes include:
 - `exp`: Unix epoch time when the token expires.
 - `jti`: JWT ID.
 
+### Direct OpenID Verification
+
 By using `iss` and `kid`, you can uniquely bind a public key and verify validity of the token using that public key and signature. 
 
-Then, use `iat`, `exp`, and the current timestamp to validate that the token is in a valid time. 
+Then, use `iat`, `exp`, and the current block.timestamp to validate that the token is in a valid time. 
 
-Obtain the `nonce` and hash of `sub` for further verification. Typically, the nonce contains information indicating the user's intent, and `sub`, when combined with `iss`, uniquely binds an OpenID key.
+Obtain the `nonce` and `sub` for further verification. Typically, the nonce contains information indicating the user's intent, and `sub`, when combined with `iss`, uniquely binds an OpenID key.
 
-If privacy protection is required, you need to use the following zk-circuit design:
+So, the verification process is as follows:
++ First, use `iss` and `kid` to locate the specified public key within the authorized set of public keys. Then, using that public key and the signature contained within the Id Token, perform signature verification on the `hash(BASE64URL(UTF8(Header)) || '.' || BASE64URL(Payload))`. If the verification is successful, proceed with other checks; otherwise, the verification fails.
++ Then, use iat and exp to ensure that the currently used Id Token is still within its validity period.
++ Then, use `aud` and `iss` to verify that the token was requested by an authorized entity.
++ Finally, extract `nonce` and `sub` from the payload, and verify whether `iss + sub` corresponds to the user's recorded OpenID key. Additionally, ensure that the nonce corresponds to the user's intent, such as storing the hash of a transaction(include tx nonce for replay protection).
+
+### Privacy-Perserving OpenID Verification
+
+If you require privacy protection, meaning you need to hide the user's sub on-chain, then you should use zero-knowledge proofs for information hiding. The circuit should adhere to the following logic verification:
 
 - Calculate id_token_hash.
 - Calculate sub_pepper_hash using sub and pepper.
@@ -93,4 +111,21 @@ If privacy protection is required, you need to use the following zk-circuit desi
 - Prove that sub is a substring of payload_raw using sub_pepper_hash as the mask.
 - Calculate public_input, which is sha256(id_token_hash|sub_pepper_hash|header_hash|payload_pubmatch_hash|bit_location_id_token_1|bit_location_payload_base64|bit_location_id_token_2|bit_location_header_base64|bit_location_payload_raw|bit_location_email_addr).
 
-To verify, use `id_token_hash` for signature verification, `payload_pub_match` (with sensitive information removed) for other checks like timestamps, nonce, etc., and also verify the correctness of the zero-knowledge proof and the correctness of constructing public_input.
+So, the verification process is as follows:
+
+Where `id_token_hash` and `sub_peeper_hash` will be provided directly and constrained in their relationship with `header` and `payload_pub_match` within `public_input`. By using `id_token_hash`, `kid` from the header, `iss` from `payload_pub_match`, and the `signature`, you can verify the signature validity of this token.
+
+Using `iat` and `exp` from `payload_pubmatch`, you can verify whether the token is within its valid time period.
+
+Then, use the `aud` extracted from `payload_pub_match` along with `iss` to verify that the token was requested by an authorized entity.
+
+Using `public_input` and the `proof` to validate the effectiveness of the zero-knowledge proof.
+
+Using `sub_papper_hash` and `iss`, you can bind to a user's OpenID key, and by using the nonce extracted from `payload_pub_match`, you can associate it with the user's intent.
+
+
+## FAQs
+
+Who can determine the on-chain public keys corresponding to iss and kid? Who can add authorized public keys?
+
+Ans: This problem is challenging to resolve completely. Firstly, we can utilize a specific oracle network to manage the update of authorized public keys, and these updates would only become effective after a certain time lock, thus preventing malicious public keys from being added to the authorized public key set.
